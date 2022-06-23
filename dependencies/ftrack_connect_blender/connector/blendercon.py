@@ -4,11 +4,33 @@
 # @Author:  Manivarma
 
 import os
+import shutil
 import tempfile
 import collections
+from filecmp import cmp
+from urllib.parse import urlparse
 
 import bpy
+
 import ftrack_api
+
+
+def copy_image_file(source, destination):
+    if not (
+        os.path.exists(destination)
+        and cmp(source, destination, shallow=True)
+    ):
+        if not os.path.exists(os.path.dirname(destination)):
+            os.makedirs(os.path.dirname(destination))
+
+        fsrc = open(source, "rb")
+        fdst = open(destination, "wb")
+        shutil.copyfileobj(fsrc, fdst, 32000000)
+        fsrc.close()
+        fdst.close()
+        shutil.copystat(source, destination)
+
+    return True
 
 
 class ftrackBlenderCode(object):
@@ -39,6 +61,38 @@ class ftrackBlenderCode(object):
 
         return assets
         # ftrackUI.register_import()
+
+    def importURLQuery(self, url):
+        url_info = urlparse(url)
+        url_fragment = url_info.fragment.split("&")
+
+        entity_id = ""
+        entity_type = ""
+        for data in url_fragment:
+            if "slideEntityId" in data:
+                entity_id = data.split("=")[-1]
+            if "slideEntityType" in data:
+                entity_type = data.split("=")[-1]
+        if entity_type != "task":
+            print("URL does not have entity type Task")
+            return
+
+        task = self.session.query(
+            "select parent.assets, parent.assets.name, "
+            "parent.assets.id, parent.assets.versions, "
+            "parent.assets.versions.version from Task where "
+            'id is "{0}"'.format(entity_id)
+        ).one()
+        assets = collections.defaultdict(dict)
+        for asset in task["parent"]["assets"]:
+            assets[asset["id"]] = collections.defaultdict(dict)
+            assets[asset["id"]]["id"] = asset["id"]
+            assets[asset["id"]]["name"] = asset["name"]
+            assets[asset["id"]]["versions"] = [
+                v["version"] for v in asset["versions"]
+            ]
+
+        return assets
 
     def get_temporary_path(self, filename):
         temp = tempfile.mkdtemp(prefix="blender_connect")
@@ -100,9 +154,27 @@ class ftrackBlenderCode(object):
 
                 for collection in data_to.collections:
                     if collection is not None:
-                        bpy.context.scene.collection.children.link(
+                        # bpy.context.scene.collection.children.link(
+                        #     collection
+                        # )
+                        # Link Options - Instance Collection
+                        instance_obj = bpy.data.objects.new(
+                            name=collection.name,
+                            object_data=None,
+                        )
+                        instance_obj.instance_collection = (
                             collection
                         )
+                        instance_obj.instance_type = (
+                            "COLLECTION"
+                        )
+                        parent_collection = (
+                            bpy.context.view_layer.active_layer_collection
+                        )
+                        parent_collection.collection.objects.link(
+                            instance_obj
+                        )
+
         else:
             print(
                 "Selected Asset does not contain a Blender file."
@@ -183,7 +255,19 @@ class ftrackBlenderCode(object):
         bpy.ops.render.opengl(write_still=True)
         self.previewRender(r_property, True)
 
+    def ftrack_customProperties(self, asset, ver):
+        # Add custom properties to collections
+        for collection in bpy.data.collections:
+            if collection.library is None:
+                collection["ftrack"] = {
+                    "asset": asset,
+                    "asset_version": ver,
+                }
+
+        return
+
     def publishAsset(self, asset_id, asset_name, option):
+
         # Save file before Publish operation
         if not bpy.data.is_saved:
             bpy.ops.wm.save_mainfile()
@@ -196,7 +280,7 @@ class ftrackBlenderCode(object):
             'select id from AssetType where name is "Scene"'
         ).one()
         asset_task = self.session.query(
-            "select parent, parent_id from Task where id is"
+            "select parent, parent_id, project.name from Task where id is"
             ' "{0}"'.format(self.taskID)
         ).one()
         asset_version = ""
@@ -206,7 +290,7 @@ class ftrackBlenderCode(object):
             version_count = 1
             try:
                 asset = self.session.query(
-                    "select versions, versions.version from Asset where "
+                    "select id, versions, versions.version from Asset where "
                     'name is "{0}" and context_id is "{1}"'.format(
                         asset_name, asset_task["parent_id"]
                     )
@@ -233,14 +317,103 @@ class ftrackBlenderCode(object):
             )
         elif option == "Existing":
             asset = self.session.query(
-                "select versions, versions.version from Asset "
+                "select id, versions, versions.version from Asset "
                 'where id is "{0}"'.format(asset_id)
             ).one()
             version = [v["version"] for v in asset["versions"]]
             version.sort()
+            version_count = version[-1] + 1
             asset_version = self.assetVersion(
-                asset_task, asset, version[-1] + 1
+                asset_task, asset, version_count
             )
+
+        # Write ftrack value to Collections
+        # It is expect all scene data is contained in Collections
+        self.ftrack_customProperties(
+            asset["id"],
+            version_count,
+        )
+        bpy.ops.file.make_paths_absolute()
+        bpy.ops.wm.save_mainfile(relative_remap=False)
+
+        project_code = asset_task["project"]["name"]
+        prefix = self.system_location.accessor.prefix
+
+        # Back up textures to local ftrack storage scenario
+        for texture in bpy.data.images:
+            if texture.filepath and os.path.exists(
+                texture.filepath
+            ):
+                if (
+                    texture.filepath.split("\\")[-2].lower()
+                    == "extra"
+                ):
+                    # Skip textures call from EXTRA folder
+                    continue
+                if not prefix:
+                    break
+            else:
+                continue
+
+            if texture.source == "FILE":
+                copy_image_file(
+                    texture.filepath,
+                    os.path.join(
+                        prefix,
+                        project_code,
+                        "textures",
+                        os.path.basename(texture.filepath),
+                    ),
+                )
+
+            if texture.source == "SEQUENCE":
+                sourcename = os.path.basename(texture.filepath)
+                dir_path = os.path.dirname(texture.filepath)
+                source_dir_name = os.path.basename(dir_path)
+                filename, ext = os.path.splitext(sourcename)
+                name = filename.rsplit("_", 1)
+                seq = ""
+                if len(name) == 2:
+                    name, seq = name
+                else:
+                    name = name[-1]
+
+                if not seq.isdigit():
+                    copy_image_file(
+                        texture.filepath,
+                        os.path.join(
+                            prefix,
+                            project_code,
+                            "textures",
+                            source_dir_name,
+                            os.path.basename(texture.filepath),
+                        ),
+                    )
+                    continue
+                for item in os.listdir(dir_path):
+                    if "_" in item and os.path.isfile(
+                        os.path.join(
+                            dir_path,
+                            item,
+                        )
+                    ):
+                        fn, e = os.path.splitext(item)
+                        n, s = fn.rsplit("_", 1)
+                        if (
+                            name == n
+                            and s.isdigit()
+                            and ext == e
+                        ):
+                            copy_image_file(
+                                os.path.join(dir_path, item),
+                                os.path.join(
+                                    prefix,
+                                    project_code,
+                                    "textures",
+                                    source_dir_name,
+                                    item,
+                                ),
+                            )
 
         filename = os.path.splitext(os.path.basename(filepath))[
             0
@@ -292,6 +465,83 @@ class ftrackBlenderCode(object):
             self.session.rollback()
 
         self.session.commit()
+
+    def versionQuery(self):
+        asset_info = collections.defaultdict(dict)
+        filePath = ""
+        c_list = []
+        for collection in bpy.data.collections:
+            if (
+                collection.library
+                and "ftrack" in collection.keys()
+            ):
+                if collection.library in c_list:
+                    continue
+                c_list.append(collection.library)
+
+                asset = collection["ftrack"]["asset"]
+                asset_version = collection["ftrack"][
+                    "asset_version"
+                ]
+                filePath = collection.library.filepath
+
+                asset = self.session.query(
+                    "select id, name, versions, versions.version from Asset where "
+                    'id is "{0}"'.format(asset)
+                ).one()
+                version = [
+                    v["version"] for v in asset["versions"]
+                ]
+                version.sort()
+                if version[-1] > asset_version:
+                    asset_info[
+                        asset["id"] + "-" + str(asset_version)
+                    ] = {
+                        "asset_name": asset["name"],
+                        "asset_id": asset["id"],
+                        "old_version": asset_version,
+                        "new_version": version[-1],
+                        "versions": version,
+                        "filePath": filePath,
+                    }
+
+        return asset_info
+
+    def versionUpdate(self, asset_id, filePath, version):
+        for collection in bpy.data.collections:
+            if (
+                collection.library
+                and "ftrack" in collection.keys()
+                and collection.library.filepath == filePath
+            ):
+                asset = self.session.query(
+                    "select components from AssetVersion where asset_id "
+                    'is "{0}" and version is "{1}"'.format(
+                        asset_id, version
+                    )
+                ).one()
+                for component in asset["components"]:
+                    if component["file_type"] == ".blend":
+                        local_file = component
+                if local_file:
+                    component = self.session.query(
+                        "select component_locations, component_locations.location_id, "
+                        "component_locations.location from FileComponent where id "
+                        'is "{0}"'.format(local_file["id"])
+                    ).one()
+                    for location in component[
+                        "component_locations"
+                    ]:
+                        if (
+                            location["location_id"]
+                            == self.system_location["id"]
+                        ):
+                            filePath = location[
+                                "location"
+                            ].get_filesystem_path(component)
+
+                # Update linked collection path to current version path
+                collection.library.filepath = filePath
 
 
 bc = ftrackBlenderCode()
