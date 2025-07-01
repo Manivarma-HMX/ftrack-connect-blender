@@ -181,13 +181,13 @@ class ApplicationStore(
         elif sys.platform == "win32":
             # Permission issues can happen
             # Change install location to Documents if necessary
-            prefix = ["C:\\", "Program Files.*"]
+            # prefix = ["C:\\", "Program Files.*"]
 
             # For permission issues (UAC) install Blender in User Documents
             # Username will be case sensitive at _searchFilesystem()
-            # user = os.getenv("USERPROFILE")
-            # user = user.split(os.sep)[-1] # user.replace("\\", "\\")
-            # prefix = ["C:\\", "Users", user, "Documents"]
+            user = os.getenv("USERPROFILE")
+            user = user.split(os.sep)[-1]
+            prefix = ["C:\\", "Users", user, "Documents"]
 
             applications.extend(
                 self._searchFilesystem(

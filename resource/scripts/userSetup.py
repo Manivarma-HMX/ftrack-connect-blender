@@ -6,7 +6,7 @@
 """
 This code will be part of Blender start up command: blender --python script
 Warning: Currently Blender uses Python 3 and ftrack Connect with Python 2
-Install ftrack-python-api==2.0.0rc6 which supports Python 3, and the
+Install ftrack-python-api==2.3.0 which supports Python 3, and the
 package does not contain module ftrack, instead ftrack_api.
 """
 
@@ -20,7 +20,7 @@ import addon_utils
 
 addon_name = "ftrackBlenderAddon"
 addon_file = addon_name + ".py"
-addon_directory = bpy.utils.user_resource("SCRIPTS", "addons")
+addon_directory = bpy.utils.user_resource("SCRIPTS", path="addons")
 
 cwd = os.path.dirname(__file__)
 addon_path = os.path.abspath(
@@ -31,8 +31,7 @@ addon_path = os.path.abspath(
 # python exe location - C:\Program Files\BlenderOctane\<version>\python\bin
 # Use following command (as Admin)
 # python -m pip install --target="C:\Program Files\BlenderOctane
-# \<version>\python\lib\site-packages" ftrack-python-api==2.0.0rc6
-# https://forum.ftrack.com/topic/1476-py3k-early-access/?tab=comments#comment-6160
+# \<version>\python\lib\site-packages" ftrack-python-api==2.3.0
 
 
 def configure_syspath():

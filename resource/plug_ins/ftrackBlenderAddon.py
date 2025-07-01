@@ -7,8 +7,8 @@
 bl_info = {
     "name": "ftrack Connect for Blender",
     "author": "Manivarma",
-    "version": (0, 2),
-    "blender": (2, 80, 0),
+    "version": (0, 4),
+    "blender": (3, 5, 1),
     "category": "Properties",
     "location": "Properties (Editor) > World > Ftrack",
     "description": "Blender file management using Ftrack.",
@@ -135,33 +135,31 @@ class FTRACK_PT_version_control(bpy.types.Panel):
         row.operator(FTRACK_OT_version_control_asset.bl_idname)
 
 
-def register():
-    bpy.utils.register_class(FTRACK_OT_import_asset)
-    bpy.utils.register_class(FTRACK_OT_import_other_asset)
-    bpy.utils.register_class(FTRACK_OT_publish_asset)
-    bpy.utils.register_class(FTRACK_OT_version_control_asset)
+classes_ = [
+    FTRACK_OT_import_asset,
+    FTRACK_OT_import_other_asset,
+    FTRACK_OT_publish_asset,
+    FTRACK_OT_version_control_asset,
+    FTRACK_PT_main_panel,
+    FTRACK_PT_import,
+    FTRACK_PT_publish,
+    FTRACK_PT_version_control,
+]
 
-    bpy.utils.register_class(FTRACK_PT_main_panel)
-    bpy.utils.register_class(FTRACK_PT_import)
-    bpy.utils.register_class(FTRACK_PT_publish)
-    bpy.utils.register_class(FTRACK_PT_version_control)
+
+def register():
+    for class_ in classes_:
+        bpy.utils.register_class(class_)
 
     ftrackUI.register()
 
 
 def unregister():
-    bpy.utils.unregister_class(FTRACK_PT_main_panel)
-    bpy.utils.unregister_class(FTRACK_PT_import)
-    bpy.utils.unregister_class(FTRACK_PT_publish)
-    bpy.utils.unregister_class(FTRACK_OT_version_control_asset)
-
-    bpy.utils.unregister_class(FTRACK_OT_import_asset)
-    bpy.utils.unregister_class(FTRACK_OT_import_other_asset)
-    bpy.utils.unregister_class(FTRACK_OT_publish_asset)
-    bpy.utils.unregister_class(FTRACK_PT_version_control)
+    for class_ in classes_:
+        bpy.utils.unregister_class(class_)
 
     ftrackUI.unregister()
 
 
-if __name__ == "__main__":
-    register()
+# if __name__ == "__main__":
+#     register()
